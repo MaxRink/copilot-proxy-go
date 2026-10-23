@@ -9,31 +9,59 @@ import (
 func modelWithContext(id string, ctx int) state.Model {
 	m := state.Model{ID: id}
 	m.Capabilities.Limits.MaxContextWindowTokens = ctx
+	m.Capabilities.Limits.MaxPromptTokens = ctx
 	return m
 }
 
-func TestToClaudeCodeName(t *testing.T) {
+func tieredModel(id string, def, long int) state.Model {
+	m := modelWithContext(id, long)
+	m.Billing.TokenPrices = map[string]state.PriceTier{
+		"default":      {MaxPromptTokens: def},
+		"long_context": {MaxPromptTokens: long},
+	}
+	return m
+}
+
+func TestModelFlavours(t *testing.T) {
 	tests := []struct {
 		name string
 		in   state.Model
-		want string
+		want []ModelFlavour
 	}{
-		{"opus 4.8 with 1M gets [1m]", modelWithContext("claude-opus-4.8", 1000000), "claude-opus-4-8[1m]"},
-		{"sonnet 4.5 at 200K stays plain", modelWithContext("claude-sonnet-4.5", 200000), "claude-sonnet-4-5"},
-		{"haiku 4.5 at 200K stays plain", modelWithContext("claude-haiku-4.5", 200000), "claude-haiku-4-5"},
-		{"reasoning suffix preserved, no 1m", modelWithContext("claude-opus-4.7-high", 200000), "claude-opus-4-7-high"},
-		{"reasoning suffix preserved, with 1m", modelWithContext("claude-opus-4.7-high", 1000000), "claude-opus-4-7-high[1m]"},
-		{"no minor version", modelWithContext("claude-sonnet-4", 200000), "claude-sonnet-4"},
-		{"non-claude passes through unchanged", modelWithContext("gpt-5.5", 1050000), "gpt-5.5"},
-		{"haiku 5.5 at 200K gets [1m] from config override", modelWithContext("claude-haiku-5.5", 200000), "claude-haiku-5-5[1m]"},
-		{"future claude family is dashed, not passed through", modelWithContext("claude-fable-5.1", 200000), "claude-fable-5-1"},
-		{"future claude family at 1M gets [1m]", modelWithContext("claude-fable-5.1", 1000000), "claude-fable-5-1[1m]"},
+		{"tiered claude gets default and [1m]", tieredModel("claude-haiku-5.5", 100000, 936000), []ModelFlavour{
+			{ID: "claude-haiku-5-5", ContextWindow: 100000},
+			{ID: "claude-haiku-5-5[1m]", ContextWindow: 936000, Long: true},
+		}},
+		{"tiered non-claude gets [long]", tieredModel("gpt-6-luna", 272000, 872000), []ModelFlavour{
+			{ID: "gpt-6-luna", ContextWindow: 272000},
+			{ID: "gpt-6-luna[long]", ContextWindow: 872000, Long: true},
+		}},
+		{"single-tier claude over 200K still gets [1m]", modelWithContext("claude-opus-4.8", 1000000), []ModelFlavour{
+			{ID: "claude-opus-4-8[1m]", ContextWindow: 1000000, Long: true},
+		}},
+		{"single-tier claude at 200K stays plain", modelWithContext("claude-sonnet-4.5", 200000), []ModelFlavour{
+			{ID: "claude-sonnet-4-5", ContextWindow: 200000},
+		}},
+		{"reasoning suffix preserved", modelWithContext("claude-opus-4.7-high", 200000), []ModelFlavour{
+			{ID: "claude-opus-4-7-high", ContextWindow: 200000},
+		}},
+		{"future claude family is dashed", modelWithContext("claude-fable-5.1", 200000), []ModelFlavour{
+			{ID: "claude-fable-5-1", ContextWindow: 200000},
+		}},
+		{"single-tier non-claude passes through", modelWithContext("gpt-5.3-codex", 272000), []ModelFlavour{
+			{ID: "gpt-5.3-codex", ContextWindow: 272000},
+		}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := ToClaudeCodeName(tt.in); got != tt.want {
-				t.Fatalf("ToClaudeCodeName(%q, ctx=%d) = %q, want %q",
-					tt.in.ID, tt.in.Capabilities.Limits.MaxContextWindowTokens, got, tt.want)
+			got := ModelFlavours(tt.in)
+			if len(got) != len(tt.want) {
+				t.Fatalf("got %+v, want %+v", got, tt.want)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Fatalf("got %+v, want %+v", got, tt.want)
+				}
 			}
 		})
 	}
@@ -46,6 +74,7 @@ func TestResolveCopilotModel(t *testing.T) {
 	}{
 		{"claude-opus-4-8", "claude-opus-4.8"},
 		{"claude-opus-4-8[1m]", "claude-opus-4.8"}, // defensive strip
+		{"gpt-6-luna[long]", "gpt-6-luna"},
 		{"claude-sonnet-4", "claude-sonnet-4"},
 		{"claude-opus-4-7-high", "claude-opus-4.7-high"},
 		{"gpt-5.5", "gpt-5.5"}, // non-claude unchanged

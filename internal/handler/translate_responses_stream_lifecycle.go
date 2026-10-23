@@ -53,7 +53,7 @@ func (s *ResponsesStreamState) handleResponseCompleted(data string) ([]SSEEvent,
 	events = append(events,
 		SSEEvent{Event: "message_delta", Data: MessageDeltaEvent{
 			Type: "message_delta", Delta: MessageDelta{StopReason: translated.StopReason},
-			Usage: DeltaUsage{OutputTokens: translated.Usage.OutputTokens},
+			Usage: DeltaUsage{InputTokens: s.inputTokens, CacheReadInputTokens: s.cachedTokens, OutputTokens: s.outputTokens},
 		}},
 		SSEEvent{Event: "message_stop", Data: MessageStopEvent{Type: "message_stop"}},
 	)
