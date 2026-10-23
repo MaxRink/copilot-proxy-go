@@ -104,6 +104,14 @@ func runClaudeCodeSetup(port int, models []state.Model) error {
 	if err != nil {
 		return fmt.Errorf("model selection cancelled: %w", err)
 	}
+	opusModel, err := runSelect("Select Opus model", ids, paletteOpus)
+	if err != nil {
+		return fmt.Errorf("model selection cancelled: %w", err)
+	}
+	fableModel, err := runSelect("Select Fable model", ids, paletteFable)
+	if err != nil {
+		return fmt.Errorf("model selection cancelled: %w", err)
+	}
 
 	copilotSmall := handler.ResolveCopilotModel(smallModel)
 	if err := config.SetSmallModel(copilotSmall); err != nil {
@@ -114,11 +122,12 @@ func runClaudeCodeSetup(port int, models []state.Model) error {
 
 	vars := []shell.EnvVar{
 		{Key: "ANTHROPIC_BASE_URL", Value: fmt.Sprintf("http://localhost:%d", port)},
-		{Key: "ANTHROPIC_AUTH_TOKEN", Value: "copilot-proxy"},
+		{Key: "ANTHROPIC_AUTH_TOKEN", Value: codexAPIKey()},
 		{Key: "ANTHROPIC_MODEL", Value: primaryModel},
-		{Key: "ANTHROPIC_SMALL_FAST_MODEL", Value: smallModel},
+		{Key: "ANTHROPIC_DEFAULT_OPUS_MODEL", Value: opusModel},
 		{Key: "ANTHROPIC_DEFAULT_SONNET_MODEL", Value: primaryModel},
 		{Key: "ANTHROPIC_DEFAULT_HAIKU_MODEL", Value: smallModel},
+		{Key: "ANTHROPIC_DEFAULT_FABLE_MODEL", Value: fableModel},
 		{Key: "DISABLE_NON_ESSENTIAL_MODEL_CALLS", Value: "1"},
 		{Key: "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", Value: "1"},
 	}

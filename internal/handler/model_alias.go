@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/tonghaoch/copilot-proxy-go/internal/config"
 	"github.com/tonghaoch/copilot-proxy-go/internal/state"
 )
 
@@ -20,7 +21,7 @@ import (
 //	claude-opus-4.7-high         (reasoning-tier suffix)
 //
 // Capture groups: family, major, minor (optional), suffix (optional).
-var claudeDotRe = regexp.MustCompile(`^(claude-(?:opus|sonnet|haiku))-(\d+)(?:\.(\d+))?(?:-(.+))?$`)
+var claudeDotRe = regexp.MustCompile(`^(claude-[a-z]+)-(\d+)(?:\.(\d+))?(?:-(.+))?$`)
 
 // claudeDashRe matches Claude Code's dashed Claude IDs.
 //
@@ -31,7 +32,7 @@ var claudeDotRe = regexp.MustCompile(`^(claude-(?:opus|sonnet|haiku))-(\d+)(?:\.
 //	claude-sonnet-4
 //
 // Capture groups: family, major, minor (optional), suffix (optional).
-var claudeDashRe = regexp.MustCompile(`^(claude-(?:opus|sonnet|haiku))-(\d+)(?:-(\d+))?(?:-(.+))?$`)
+var claudeDashRe = regexp.MustCompile(`^(claude-[a-z]+)-(\d+)(?:-(\d+))?(?:-(.+))?$`)
 
 // standardClaudeContextTokens is the default Claude context window (200K). A
 // model whose reported context window exceeds this is an "extended context"
@@ -39,10 +40,14 @@ var claudeDashRe = regexp.MustCompile(`^(claude-(?:opus|sonnet|haiku))-(\d+)(?:-
 // carries the [1m] suffix (see ToClaudeCodeName).
 const standardClaudeContextTokens = 200000
 
-// is1MContextModel reports whether a model advertises an extended (>200K)
-// context window in its capabilities.
+// is1MContextModel reports whether a model is extended-context: either Copilot
+// reports a window above 200K, or the model is listed in the config override
+// (for models Copilot reports at 200K but supports 1M, such as Haiku 5.5).
 func is1MContextModel(m state.Model) bool {
-	return m.Capabilities.Limits.MaxContextWindowTokens > standardClaudeContextTokens
+	if m.Capabilities.Limits.MaxContextWindowTokens > standardClaudeContextTokens {
+		return true
+	}
+	return config.Is1MContextModel(m.ID)
 }
 
 // ToClaudeCodeName converts a Copilot model into the Claude Code-friendly

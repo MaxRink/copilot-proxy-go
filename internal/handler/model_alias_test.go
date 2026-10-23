@@ -25,6 +25,9 @@ func TestToClaudeCodeName(t *testing.T) {
 		{"reasoning suffix preserved, with 1m", modelWithContext("claude-opus-4.7-high", 1000000), "claude-opus-4-7-high[1m]"},
 		{"no minor version", modelWithContext("claude-sonnet-4", 200000), "claude-sonnet-4"},
 		{"non-claude passes through unchanged", modelWithContext("gpt-5.5", 1050000), "gpt-5.5"},
+		{"haiku 5.5 at 200K gets [1m] from config override", modelWithContext("claude-haiku-5.5", 200000), "claude-haiku-5-5[1m]"},
+		{"future claude family is dashed, not passed through", modelWithContext("claude-fable-5.1", 200000), "claude-fable-5-1"},
+		{"future claude family at 1M gets [1m]", modelWithContext("claude-fable-5.1", 1000000), "claude-fable-5-1[1m]"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
