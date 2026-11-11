@@ -56,6 +56,9 @@ func (h *Handler) nonStreamChatToAnthropic(w http.ResponseWriter, resp *http.Res
 		return
 	}
 	captureChatUsage(rec, ccResp.Usage)
+	if len(ccResp.Choices) > 0 {
+		rec.StopReason = ccResp.Choices[0].FinishReason
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(h.anthropic.FromChat(&ccResp))
 }

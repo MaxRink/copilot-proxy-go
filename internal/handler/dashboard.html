@@ -727,8 +727,21 @@
     .charts-row { grid-template-columns: 1fr; }
     :root { --ring-size: 80px; }
   }
+  :root { color-scheme: dark; }
+  * { scrollbar-color: rgba(255,255,255,0.18) transparent; scrollbar-width: thin; }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.18); border-radius: 4px; }
+  .activity-scroll { overflow-x: auto; }
+  .table-fit { overflow-x: auto; }
+  .activity-table.wrap td { white-space: normal; vertical-align: top; }
+  .activity-table .sub { font-size: 0.72rem; color: var(--fg-muted); margin-top: 0.15rem; }
+  .activity-table .total-row td { color: var(--fg); font-weight: 600; border-top: 1px solid var(--border); }
+  .activity-table code { font-size: 0.75rem; }
+  a.account-link, a.account-link:visited { color: var(--accent); font-weight: 600; text-decoration: none; }
+  a.account-link:hover { text-decoration: underline; }
   .raise-control { display: inline-flex; gap: 0.35rem; align-items: center; }
-  .raise-control input { width: 5.5rem; background: transparent; color: inherit; border: 1px solid var(--border); border-radius: 6px; padding: 0.2rem 0.4rem; }
+  .raise-control input { width: 4rem; background: transparent; color: inherit; border: 1px solid var(--border); border-radius: 6px; padding: 0.2rem 0.4rem; }
   .raise-control button { background: rgba(96,165,250,0.15); color: var(--accent); border: 1px solid var(--border); border-radius: 6px; padding: 0.2rem 0.6rem; cursor: pointer; }
   .raise-control button:hover { border-color: var(--border-hover); }
   .route-list { margin: 0.25rem 0 0 1.25rem; font-size: 0.85rem; }
@@ -872,7 +885,7 @@ async function raiseBudget(name) {
 function raiseControl(name) {
   const value = raiseAmounts[name] || 50;
   return '<span class="raise-control"><input type="number" min="1" step="1" value="' + escapeAttr(value) + '" data-raise-input="' + escapeAttr(name) +
-    '" aria-label="USD to add to the ' + escapeAttr(name) + ' budget"><button type="button" data-raise="' + escapeAttr(name) + '">+ Raise budget</button></span>';
+    '" aria-label="USD to add to the ' + escapeAttr(name) + ' budget"><button type="button" data-raise="' + escapeAttr(name) + '">+ Raise</button></span>';
 }
 
 function mergeStats(perAccount) {
@@ -1125,46 +1138,50 @@ function renderBudgetCard() {
 }
 
 // -- All-accounts overview --
+function catchAllRoute(routes) {
+  return routes.find(r => r.models.includes('*'));
+}
+
 function renderAccountsOverview() {
   const accounts = accountsData.accounts;
   const routes = accountsData.model_routes || [];
+  const catchAll = catchAllRoute(routes);
   let total = {spent: 0, limit: 0, remaining: 0, requests: 0, input: 0, output: 0};
-  let html = '<div class="card"><div class="card-label">All accounts</div>';
-  html += '<table class="activity-table"><thead><tr><th>Account</th><th>Type</th><th>Routed models</th><th>Requests</th><th>Input / Output</th><th>Est. spend / limit</th><th>Remaining</th><th>Status</th><th>Budget</th></tr></thead><tbody>';
+  let html = '<div class="card"><div class="card-label">All accounts</div><div class="table-fit">';
+  html += '<table class="activity-table wrap"><thead><tr><th>Account</th><th>Routed models</th><th>Requests</th><th>Tokens in / out</th><th>Est. spend / limit</th><th>Status</th><th>Raise budget</th></tr></thead><tbody>';
   for (const a of accounts) {
     const b = a.budget;
     const s = accountStats[a.name] || {};
     const t = s.tokens || {};
     const input = (t.input || 0) + (t.cached || 0) + (t.cache_creation || 0);
     const patterns = routes.filter(r => r.account === a.name).flatMap(r => r.models);
-    const routed = (patterns.length ? patterns.map(p => '<code>' + escapeHtml(p) + '</code>').join(', ') : '') +
-      (a.name === accountsData.default_account ? (patterns.length ? '; ' : '') + '<em>unmatched</em>' : '');
+    if (a.name === accountsData.default_account && !catchAll) patterns.push('unmatched');
     total.requests += s.total_requests || 0;
     total.input += input;
     total.output += t.output || 0;
-    html += '<tr><td><a href="' + escapeAttr(a.base_path + '/dashboard') + '"><strong>' + escapeHtml(a.name) + '</strong></a>' +
-      (a.name === accountsData.default_account ? ' <span class="badge badge-feature">default</span>' : '') + '</td>';
-    html += '<td>' + escapeHtml(a.account_type || '') + '</td><td>' + (routed || '&mdash;') + '</td>';
+    html += '<tr><td><a class="account-link" href="' + escapeAttr(a.base_path + '/dashboard') + '">' + escapeHtml(a.name) + '</a>' +
+      (a.name === accountsData.default_account ? ' <span class="badge badge-feature">default</span>' : '') +
+      '<div class="sub">' + escapeHtml(a.account_type || '') + '</div></td>';
+    html += '<td>' + (patterns.length ? patterns.map(p => p === 'unmatched' ? '<em>unmatched</em>' : '<code>' + escapeHtml(p) + '</code>').join(' ') : '&mdash;') + '</td>';
     html += '<td>' + formatNumber(s.total_requests || 0) + '</td>';
     html += '<td>' + formatTokens(input) + ' / ' + formatTokens(t.output || 0) + '</td>';
     if (b) {
       total.spent += b.estimated_spent_usd; total.limit += b.limit_usd; total.remaining += b.remaining_usd;
       const pct = b.limit_usd > 0 ? Math.min(100, b.estimated_spent_usd / b.limit_usd * 100) : 0;
       html += '<td title="Reported ' + escapeAttr(usd(b.reported_usage_usd)) + ' + reserve ' + escapeAttr(usd(b.reserved_usd)) + '">' + usd(b.estimated_spent_usd) + ' / ' + usd(b.limit_usd) +
-        ' <span style="color:' + getColor(100 - pct) + '">(' + pct.toFixed(0) + '%)</span></td>';
-      html += '<td>' + usd(b.remaining_usd) + '</td>';
+        '<div class="sub"><span style="color:' + getColor(100 - pct) + '">' + pct.toFixed(0) + '% used</span> &middot; ' + usd(b.remaining_usd) + ' left</div></td>';
       html += '<td><span class="badge ' + (b.blocked ? 'badge-error' : 'badge-feature') + '"' + (b.reason ? ' title="' + escapeAttr(b.reason) + '"' : '') + '>' +
-        (b.blocked ? 'Blocked' : 'Accepting') + '</span>' + (b.in_flight ? ' ' + b.in_flight + ' in flight' : '') + '</td>';
+        (b.blocked ? 'Blocked' : 'Accepting') + '</span>' + (b.in_flight ? '<div class="sub">' + b.in_flight + ' in flight</div>' : '') + '</td>';
       html += '<td>' + raiseControl(a.name) + '</td>';
     } else {
-      html += '<td colspan="4" style="color:var(--fg-muted)">No budget</td>';
+      html += '<td colspan="3" style="color:var(--fg-muted)">No budget</td>';
     }
     html += '</tr>';
   }
-  html += '<tr><td><strong>Total</strong></td><td></td><td></td><td><strong>' + formatNumber(total.requests) + '</strong></td>';
-  html += '<td><strong>' + formatTokens(total.input) + ' / ' + formatTokens(total.output) + '</strong></td>';
-  html += '<td><strong>' + usd(total.spent) + ' / ' + usd(total.limit) + '</strong></td><td><strong>' + usd(total.remaining) + '</strong></td><td></td><td></td></tr>';
-  html += '</tbody></table>';
+  html += '<tr class="total-row"><td>Total</td><td></td><td>' + formatNumber(total.requests) + '</td>';
+  html += '<td>' + formatTokens(total.input) + ' / ' + formatTokens(total.output) + '</td>';
+  html += '<td>' + usd(total.spent) + ' / ' + usd(total.limit) + '<div class="sub">' + usd(total.remaining) + ' left</div></td><td></td><td></td></tr>';
+  html += '</tbody></table></div>';
 
   html += '<div class="card-label" style="margin-top:1rem">Routing policy</div>';
   html += '<div style="font-size:0.8rem;color:var(--fg-dim)">Matched against the model the client requests (before compact/warmup substitution), case-insensitive, first match wins. <code>/accounts/&lt;name&gt;/&hellip;</code> URLs bypass the rules.</div>';
@@ -1172,12 +1189,18 @@ function renderAccountsOverview() {
   for (const r of routes) {
     html += '<li>' + r.models.map(m => '<code>' + escapeHtml(m) + '</code>').join(', ') + ' &rarr; <strong>' + escapeHtml(r.account) + '</strong></li>';
   }
-  html += '<li>anything else &rarr; <strong>' + escapeHtml(accountsData.default_account) + '</strong> (default)</li></ol>';
+  if (!catchAll) html += '<li>anything else &rarr; <strong>' + escapeHtml(accountsData.default_account) + '</strong> (default)</li>';
+  html += '</ol>';
+  if (catchAll) html += '<div class="insight-note"><strong>' + escapeHtml(accountsData.default_account) + '</strong> is the default account for non-model endpoints (usage, token); every model matches a rule above.</div>';
   html += '<div class="insight-note">Budgets are per-process estimates; a raise lasts until restart. Exhausted accounts refuse requests rather than spilling into another account.</div>';
   return html + '</div>';
 }
 
 // -- Request insights over the buffered recent requests --
+function fmtLat(ms) {
+  return ms >= 1000 ? (ms / 1000).toFixed(1) + 's' : ms + 'ms';
+}
+
 function percentile(sorted, p) {
   if (!sorted.length) return 0;
   return sorted[Math.min(sorted.length - 1, Math.floor(p / 100 * sorted.length))];
@@ -1210,7 +1233,6 @@ function renderInsights() {
   latencies.sort((a, b) => a - b);
   const pct = n => Math.round(n / recent.length * 100) + '%';
   const oldest = new Date(recent[recent.length - 1].timestamp);
-  const fmtLat = ms => ms >= 1000 ? (ms / 1000).toFixed(1) + 's' : ms + 'ms';
 
   let html = '<div class="card"><div class="card-label">Request insights (last ' + recent.length + ' requests, since ' + escapeHtml(timeAgo(oldest)) + ')</div><div class="stats-bar">';
   html += renderStatChip(pct(errors), 'Error rate', errors + ' failed');
@@ -1226,8 +1248,8 @@ function renderInsights() {
   html += '</div>';
 
   const spend = Object.assign(Object.create(null), statsData.model_spend_usd);
-  html += '<table class="activity-table" style="margin-top:0.75rem"><thead><tr><th>Model</th>' + (isCombined() ? '<th>Account</th>' : '') +
-    '<th>Requests</th><th>Errors</th><th>p50 / p95</th><th>Avg in / out</th><th>Cache hit</th><th>Est. cost (window)</th><th>Est. cost (since restart)</th></tr></thead><tbody>';
+  html += '<div class="table-fit"><table class="activity-table"><thead><tr><th>Model</th>' + (isCombined() ? '<th>Account</th>' : '') +
+    '<th>Reqs</th><th>Errors</th><th>p50 / p95</th><th>Avg in / out</th><th>Cache</th><th title="Over the requests in this window">Cost</th><th title="Since proxy restart">Total cost</th></tr></thead><tbody>';
   for (const [model, m] of Object.entries(byModel).sort((a, b) => b[1].cost - a[1].cost || b[1].n - a[1].n)) {
     m.lat.sort((a, b) => a - b);
     html += '<tr><td><span class="model-id">' + escapeHtml(model) + '</span></td>';
@@ -1238,7 +1260,7 @@ function renderInsights() {
     html += '<td>' + (m.input ? Math.round(m.cached / m.input * 100) : 0) + '%</td>';
     html += '<td>' + usd(m.cost) + '</td><td>' + usd(spend[model]) + '</td></tr>';
   }
-  html += '</tbody></table>';
+  html += '</tbody></table></div>';
 
   const badges = counts => Object.entries(counts).sort((a, b) => b[1] - a[1])
     .map(([k, v]) => '<span class="badge badge-feature">' + escapeHtml(k) + ' &times; ' + v + '</span>').join(' ');
@@ -1247,13 +1269,13 @@ function renderInsights() {
 
   const failed = recent.filter(r => (r.status_code || 0) >= 400).slice(0, 5);
   if (failed.length) {
-    html += '<div class="card-label" style="margin-top:1rem">Recent errors</div><table class="activity-table"><tbody>';
+    html += '<div class="card-label" style="margin-top:1rem">Recent errors</div><div class="table-fit"><table class="activity-table wrap"><tbody>';
     for (const r of failed) {
       html += '<tr><td>' + escapeHtml(timeAgo(new Date(r.timestamp))) + '</td>' + (r.account ? '<td>' + escapeHtml(r.account) + '</td>' : '') +
         '<td><span class="model-id">' + escapeHtml(r.routed_model || r.model || '') + '</span></td><td><span class="badge badge-error">' + r.status_code + '</span></td>' +
         '<td style="color:var(--fg-dim)">' + escapeHtml(r.error || r.fallback || '') + '</td></tr>';
     }
-    html += '</tbody></table>';
+    html += '</tbody></table></div>';
   }
   html += '<div class="insight-note">Costs are the proxy\'s estimates at admission prices. Window covers the newest ' + (isCombined() ? 'requests buffered per account' : 'buffered requests') + ' (up to 200 each).</div>';
   return html + '</div>';
@@ -1517,7 +1539,7 @@ function renderActivityFeed() {
   html += '<div class="collapsible-body open">';
   html += '<div class="activity-scroll">';
   html += '<table class="activity-table"><thead><tr>';
-  html += '<th>Time</th>' + (combined ? '<th>Account</th>' : '') + '<th>Model</th><th>Backend</th><th>Type</th><th>Who</th><th>Status</th><th>Input / Output</th><th>Est. cost</th><th>Stop</th><th>Latency</th>';
+  html += '<th>Time</th>' + (combined ? '<th>Account</th>' : '') + '<th>Model</th><th>Route</th><th>Status</th><th>In / Out</th><th>Cost</th><th>Stop</th><th>Latency</th>';
   html += '</tr></thead><tbody>';
 
   for (const r of rows) {
@@ -1533,7 +1555,7 @@ function renderActivityFeed() {
     const created = r.cache_creation_tokens || 0;
     const tokens = (uncached + cached + created).toLocaleString() + ' / ' + (r.output_tokens || 0).toLocaleString();
     const tokenDetail = 'Uncached: ' + uncached.toLocaleString() + '; cache read: ' + cached.toLocaleString() + '; cache write: ' + created.toLocaleString();
-    const latency = r.latency_ms ? r.latency_ms + 'ms' : '';
+    const latency = r.latency_ms ? fmtLat(r.latency_ms) : '';
     const status = r.status_code || 0;
     const flags = [r.endpoint, r.streaming ? 'stream' : '', r.tool_count ? r.tool_count + ' tools' : '', r.has_vision ? 'vision' : '',
       r.thinking_budget ? 'thinking ' + r.thinking_budget : ''].filter(Boolean).join('; ');
@@ -1541,10 +1563,9 @@ function renderActivityFeed() {
     html += '<tr title="' + escapeAttr(flags) + '">';
     html += '<td>' + escapeHtml(ts) + '</td>';
     if (combined) html += '<td>' + escapeHtml(r.account || '') + '</td>';
-    html += '<td><span class="model-id">' + escapeHtml(shortModel) + '</span></td>';
-    html += '<td><span class="badge badge-' + escapeHtml(backend) + '">' + escapeHtml(backend) + '</span>' + fellBack + '</td>';
-    html += '<td><span class="badge badge-' + escapeHtml(reqType) + '">' + escapeHtml(reqType) + '</span></td>';
-    html += '<td>' + (who === 'agent' ? '&#x1f916;' : '&#x1f464;') + '</td>';
+    html += '<td><span class="model-id" title="' + escapeAttr(model) + '">' + escapeHtml(shortModel) + '</span></td>';
+    html += '<td><span title="' + (who === 'agent' ? 'agent' : 'user') + '">' + (who === 'agent' ? '&#x1f916;' : '&#x1f464;') + '</span> <span class="badge badge-' + escapeHtml(backend) + '">' + escapeHtml(backend) + '</span>' +
+      (reqType ? ' <span class="badge badge-' + escapeHtml(reqType) + '">' + escapeHtml(reqType) + '</span>' : '') + fellBack + '</td>';
     html += '<td><span class="badge ' + (status >= 400 ? 'badge-error' : 'badge-feature') + '"' + (r.error ? ' title="' + escapeAttr(r.error) + '"' : '') + '>' + status + '</span></td>';
     html += '<td title="' + escapeHtml(tokenDetail) + '" style="font-variant-numeric:tabular-nums">' + tokens + '</td>';
     html += '<td style="font-variant-numeric:tabular-nums">' + (r.estimated_cost_usd ? usd(r.estimated_cost_usd) : '') + '</td>';

@@ -28,3 +28,12 @@ func TestCaptureChatUsage(t *testing.T) {
 		t.Fatalf("unexpected usage: %+v", rec)
 	}
 }
+
+func TestCaptureNativeTokensRecordsStopReason(t *testing.T) {
+	rec := &state.RequestRecord{Backend: "messages"}
+	captureNativeTokens("message_delta", `{"delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":5}}`, rec)
+	captureNativeTokens("message_delta", `{"usage":{"output_tokens":6}}`, rec)
+	if rec.StopReason != "tool_use" {
+		t.Fatalf("stop reason = %q", rec.StopReason)
+	}
+}

@@ -167,6 +167,7 @@ func (h *Handler) forwardNativeMessagesResponse(w http.ResponseWriter, resp *htt
 			} `json:"content"`
 		}
 		if json.Unmarshal(buf.Bytes(), &anthResp) == nil {
+			rec.StopReason = anthResp.StopReason
 			if rec.Backend == "anthropic" || rec.Backend == "messages" {
 				if anthResp.StopReason == "compaction" {
 					rec.RequireIterations = true
@@ -373,9 +374,15 @@ func captureNativeTokens(eventType, data string, rec *state.RequestRecord) {
 	case "message_delta":
 		var evt struct {
 			Usage *nativeTokenUsage `json:"usage"`
+			Delta struct {
+				StopReason string `json:"stop_reason"`
+			} `json:"delta"`
 		}
 		if json.Unmarshal([]byte(data), &evt) == nil {
 			captureNativeUsage(rec, evt.Usage, true)
+			if evt.Delta.StopReason != "" {
+				rec.StopReason = evt.Delta.StopReason
+			}
 		}
 	case "content_block_start":
 		if rec.Backend == "anthropic" || rec.Backend == "messages" {

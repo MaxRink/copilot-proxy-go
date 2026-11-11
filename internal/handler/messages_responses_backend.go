@@ -46,6 +46,7 @@ func (h *Handler) nonStreamResponsesToAnthropic(w http.ResponseWriter, resp *htt
 		return
 	}
 	captureResponsesUsage(rec, result.Usage)
+	captureResponsesStop(rec, &result)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(h.anthropic.FromResponses(&result))
 }

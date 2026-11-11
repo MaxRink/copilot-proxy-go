@@ -141,6 +141,7 @@ func (h *Handler) Responses(w http.ResponseWriter, r *http.Request) {
 		var result ResponsesResult
 		if json.Unmarshal(captured.Bytes(), &result) == nil {
 			captureResponsesUsage(rec, result.Usage)
+			captureResponsesStop(rec, &result)
 		}
 	}
 }

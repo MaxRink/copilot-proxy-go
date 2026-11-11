@@ -50,10 +50,20 @@ func captureResponsesStreamUsage(eventType, data string, rec *state.RequestRecor
 	var response ResponsesResult
 	if json.Unmarshal(event.Response, &response) == nil {
 		captureResponsesUsage(rec, response.Usage)
+		if eventType == "response.completed" || eventType == "response.incomplete" {
+			captureResponsesStop(rec, &response)
+		}
 		if response.Usage != nil && eventType != "response.completed" && eventType != "response.incomplete" {
 			rec.InputUsageKnown = false
 			rec.OutputUsageKnown = false
 		}
+	}
+}
+
+func captureResponsesStop(rec *state.RequestRecord, result *ResponsesResult) {
+	rec.StopReason = result.Status
+	if result.IncompleteDetails != nil && result.IncompleteDetails.Reason != "" {
+		rec.StopReason = result.IncompleteDetails.Reason
 	}
 }
 

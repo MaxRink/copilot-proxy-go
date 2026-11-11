@@ -139,6 +139,9 @@ func forwardJSON(w http.ResponseWriter, resp *http.Response, rec *state.RequestR
 	var result ChatCompletionResponse
 	if json.Unmarshal(captured.Bytes(), &result) == nil {
 		captureChatUsage(rec, result.Usage)
+		if len(result.Choices) > 0 {
+			rec.StopReason = result.Choices[0].FinishReason
+		}
 	}
 }
 
@@ -159,6 +162,9 @@ func captureChatUsage(rec *state.RequestRecord, usage *ChatCompletionUsage) {
 func captureChatStreamUsage(rec *state.RequestRecord, chunk *ChatCompletionChunk) {
 	if len(chunk.Choices) > 0 {
 		rec.OutputUsageKnown = false
+		if chunk.Choices[0].FinishReason != nil {
+			rec.StopReason = *chunk.Choices[0].FinishReason
+		}
 	}
 	if chunk.Usage != nil {
 		captureChatUsage(rec, chunk.Usage)
