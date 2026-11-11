@@ -131,11 +131,16 @@ func (h *Handler) Stats(w http.ResponseWriter, r *http.Request) {
 			AnthropicFallback:    h.directAnthropic != nil && h.anthropicFallback,
 		},
 	}
-	if h.budget != nil {
-		budget := h.budget.Snapshot()
-		resp.Budget = &budget
-	}
+	resp.Budget = h.BudgetSnapshot()
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+}
+
+func (h *Handler) BudgetSnapshot() *state.BudgetSnapshot {
+	if h.budget == nil {
+		return nil
+	}
+	snapshot := h.budget.Snapshot()
+	return &snapshot
 }

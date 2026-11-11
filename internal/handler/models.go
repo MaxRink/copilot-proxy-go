@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -27,6 +28,7 @@ type ModelEntry struct {
 	MaxOutputTokens int                `json:"max_output_tokens,omitempty"`
 	Limits          *state.ModelLimits `json:"limits,omitempty"`
 	Policy          string             `json:"policy,omitempty"`
+	CopilotAccount  string             `json:"copilot_account,omitempty"`
 }
 
 // Models handles GET /models and /v1/models.
@@ -35,16 +37,25 @@ func Models(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) Models(w http.ResponseWriter, r *http.Request) {
+	entries, err := h.ListModels(r.Context())
+	if err != nil {
+		slog.Error("failed to fetch models", "error", err)
+		http.Error(w, `{"error": "failed to fetch models"}`, http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(ModelsListResponse{Object: "list", Data: entries})
+}
+
+func (h *Handler) ListModels(ctx context.Context) ([]ModelEntry, error) {
 	models := h.state.GetModels()
 
 	// Fallback: fetch models if not cached yet
 	if len(models) == 0 {
 		slog.Info("models not cached, fetching...")
-		fetched, err := h.copilot.FetchModels(r.Context())
+		fetched, err := h.copilot.FetchModels(ctx)
 		if err != nil {
-			slog.Error("failed to fetch models", "error", err)
-			http.Error(w, `{"error": "failed to fetch models"}`, http.StatusInternalServerError)
-			return
+			return nil, err
 		}
 		h.state.SetModels(fetched)
 		models = fetched
@@ -82,10 +93,5 @@ func (h *Handler) Models(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(ModelsListResponse{
-		Object:  "list",
-		Data:    entries,
-		HasMore: false,
-	})
+	return entries, nil
 }

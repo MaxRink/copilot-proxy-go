@@ -739,6 +739,7 @@
       <h1>Copilot Proxy</h1>
     </div>
     <div class="header-right">
+      <select id="accountSelect" aria-label="Copilot account" hidden></select>
       <div class="status-badge">
         <span class="status-dot" id="statusDot"></span>
         <span id="statusText">Checking...</span>
@@ -764,7 +765,8 @@
 </div>
 
 <script>
-const BASE = window.location.origin;
+const ACCOUNT_PATH = window.location.pathname.replace(/\/dashboard\/?$/, '');
+const BASE = window.location.origin + ACCOUNT_PATH;
 let autoRefresh = true;
 let refreshTimer = null;
 let countdownTimer = null;
@@ -775,11 +777,33 @@ let statsData = null;
 // -- Init --
 document.addEventListener('DOMContentLoaded', () => {
   updateToggleUI();
+  loadAccounts();
   document.getElementById('autoRefreshToggle').addEventListener('click', toggleAutoRefresh);
   checkHealth();
   fetchAll();
   startAutoRefresh();
 });
+
+async function loadAccounts() {
+  try {
+    const response = await fetch(window.location.origin + '/api/accounts');
+    if (!response.ok) return;
+    const data = await response.json();
+    if (!data.accounts || data.accounts.length < 2) return;
+    const select = document.getElementById('accountSelect');
+    for (const account of data.accounts) {
+      const option = document.createElement('option');
+      option.value = account.base_path + '/dashboard';
+      option.textContent = account.name;
+      option.selected = ACCOUNT_PATH === account.base_path || (!ACCOUNT_PATH && account.name === data.default_account);
+      select.appendChild(option);
+    }
+    select.hidden = false;
+    select.addEventListener('change', () => window.location.assign(select.value));
+  } catch (_) {
+    // Older servers do not expose an account directory.
+  }
+}
 
 function toggleAutoRefresh() {
   autoRefresh = !autoRefresh;

@@ -187,6 +187,80 @@ By default, when Anthropic rejects a `/v1/messages` or `/v1/messages/count_token
 
 The dashboard's **Usage by provider** card and the `providers` field of `/api/stats` split requests, errors, and tokens between the Anthropic API and Copilot; with a budget, `budget.provider_spent_usd` splits this process's estimated spend (restored spend is not attributed).
 
+## Multiple Copilot accounts
+
+The existing login and `--budget-usd` flags remain the default account. Add other
+accounts with their own tokens, token refresh, model catalogs, metrics and budgets
+using `--accounts-file`. No requests automatically spill into another account when
+a budget is exhausted or an account fails.
+
+Authenticate the additional account without replacing your existing login:
+
+```bash
+./copilot-proxy-go auth --token-file /path/to/business.token
+```
+
+Authorize the business GitHub account in the device-code flow (use `--force` to
+replace a login already in that file). Create an accounts file, for example:
+
+```json
+{
+  "defaultAccount": "private",
+  "accounts": [
+    {
+      "name": "_dtag",
+      "tokenFile": "business.token",
+      "accountType": "business",
+      "budgetUSD": 100,
+      "budgetSpentUSD": 0,
+      "budgetReservedUSD": 0
+    }
+  ],
+  "modelRoutes": [
+    {"account": "_dtag", "models": ["*luna*", "*haiku*"]}
+  ]
+}
+```
+
+```bash
+./copilot-proxy-go start --accounts-file /path/to/accounts.json --budget-usd 200
+```
+
+This sends Luna and Haiku requests to `_dtag`; everything else uses the existing
+login, named `private`, and its $200 budget. The business account has its own $100
+budget. Each additional account requires an explicit positive `budgetUSD`;
+`accountType` defaults to `individual` (also accepts `business` or `enterprise`).
+Instead of `tokenFile`, use `tokenEnv` with the name of an environment variable
+containing that account's GitHub OAuth token. Tokens are never embedded in the
+accounts file or returned by the account directory. Relative token-file paths
+resolve relative to the accounts file, not the working directory.
+
+Rules are ordered, first match wins, and match the original client model before
+compact/warmup substitutions. Patterns are case-insensitive shell globs; family
+patterns such as `*haiku*` cover dotted/dashed aliases and context suffixes. The
+root `/models` catalog lists models from the accounts selected by these rules,
+with a `copilot_account` field on each entry.
+
+To explicitly pin a client to an account and bypass the model rules, use
+`http://localhost:4141/accounts/_dtag` as its base URL (append `/v1` for OpenAI
+clients). Every API route is available under that prefix. Responses identify the
+selected account with `X-Copilot-Proxy-Account`, also included in request logs.
+`GET /api/accounts` lists account names, base paths, routing rules and current
+budgets; `/accounts/_dtag/api/stats` and `/accounts/_dtag/usage` show only that
+account. The dashboard has an account selector.
+
+The ordinary proxy API keys authorize **all** configured accounts; profiles are
+not separate client access-control policies. Additional profiles use Copilot
+only; the optional direct Anthropic provider remains attached to the default
+account.
+
+Budgets remain local per-process estimates, not provider invoices or persistent
+ledgers. `--budget-*` applies only to the default account, not to the total of all
+accounts. On restart, restore each additional account using its
+`budgetSpentUSD`/`budgetReservedUSD`, and the default account using the existing
+CLI flags. Shutdown logs report the final spend and reserve **per account**.
+Keep token files outside Git; authentication creates them with mode `0600`.
+
 ## API Endpoints
 
 | Endpoint | Method | Description |
@@ -231,6 +305,7 @@ Flags:
       --budget-reserved-usd float  reserved portion of restored spend (requires --budget-spent-usd)
       --force-cache-ttl string  override native Messages cache breakpoints: 5m or 1h
       --anthropic-fallback      retry through Copilot when the direct Anthropic API fails (default true)
+      --accounts-file string   additional Copilot accounts, separate budgets and model routing (JSON)
   -g, --github-token string   GitHub OAuth token (skips device code flow)
       --host string           host/IP to bind to, use 0.0.0.0 for all interfaces (default "127.0.0.1")
   -p, --port int              port to listen on (default 4141)

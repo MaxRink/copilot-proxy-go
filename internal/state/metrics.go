@@ -139,15 +139,19 @@ type metricsStore struct {
 }
 
 // Metrics is the singleton metrics store instance.
-var Metrics = &metricsStore{
-	agg: Aggregates{
-		ModelCounts:   make(map[string]int64),
-		BackendCounts: make(map[string]int64),
-		TypeCounts:    make(map[string]int64),
-		Providers:     make(map[string]ProviderUsage),
-		StartTime:     time.Now(),
-	},
-	ring: make([]RequestRecord, ringBufferSize),
+var Metrics = NewMetricsStore()
+
+func NewMetricsStore() *metricsStore {
+	return &metricsStore{
+		agg: Aggregates{
+			ModelCounts:   make(map[string]int64),
+			BackendCounts: make(map[string]int64),
+			TypeCounts:    make(map[string]int64),
+			Providers:     make(map[string]ProviderUsage),
+			StartTime:     time.Now(),
+		},
+		ring: make([]RequestRecord, ringBufferSize),
+	}
 }
 
 // RecordRequest appends a record to the ring buffer and updates aggregates.

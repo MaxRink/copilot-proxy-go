@@ -39,6 +39,7 @@ func startCmd() *cobra.Command {
 		budgetReservedUSD float64
 		anthropicFallback bool
 		forceCacheTTL     string
+		accountsFile      string
 	)
 
 	cmd := &cobra.Command{
@@ -52,6 +53,14 @@ func startCmd() *cobra.Command {
 			}
 			if forceCacheTTL != "" && forceCacheTTL != "5m" && forceCacheTTL != "1h" {
 				return fmt.Errorf("--force-cache-ttl must be 5m or 1h")
+			}
+			var accountsConfig *config.CopilotAccounts
+			if accountsFile != "" {
+				var err error
+				accountsConfig, err = config.LoadCopilotAccounts(accountsFile)
+				if err != nil {
+					return err
+				}
 			}
 			var budget *state.TokenBudget
 			if cmd.Flags().Changed("budget-usd") {
@@ -100,16 +109,7 @@ func startCmd() *cobra.Command {
 				return fmt.Errorf("authentication failed: %w", err)
 			}
 
-			copilotClient := service.NewClientWithOptions(service.ClientOptions{
-				HTTPClient:   api.HTTPClient(),
-				RefreshToken: auth.RefreshCopilotTokenNow,
-				BuildHeaders: func() http.Header {
-					return api.BuildCopilotHeaders(state.Global.GetCopilotToken(), state.Global.GetVSCodeVersion())
-				},
-				BuildURL: func(path string) string {
-					return api.GetBaseURL(state.Global.GetAccountType()) + path
-				},
-			})
+			copilotClient := copilotClientFor(state.Global, auth.RefreshCopilotTokenNow)
 
 			slog.Info("fetching models...")
 			models, err := copilotClient.FetchModels(appCtx)
@@ -118,6 +118,15 @@ func startCmd() *cobra.Command {
 			}
 			state.Global.SetModels(models)
 			slog.Info("models loaded", "count", len(models))
+			additionalAccounts, err := setupCopilotAccounts(appCtx, accountsConfig)
+			if err != nil {
+				return err
+			}
+			defaultName := "default"
+			if accountsConfig != nil {
+				defaultName = accountsConfig.DefaultAccount
+			}
+			accounts := append([]copilotAccount{{defaultName, state.Global, copilotClient, budget}}, additionalAccounts...)
 
 			var directAnthropic *service.AnthropicClient
 			if key := os.Getenv("ANTHROPIC_API_KEY"); key != "" {
@@ -145,12 +154,14 @@ func startCmd() *cobra.Command {
 					case <-appCtx.Done():
 						return
 					case <-ticker.C:
-						fresh, err := copilotClient.FetchModels(appCtx)
-						if err != nil {
-							slog.Warn("model refresh failed, keeping cached list", "error", err)
-						} else {
-							state.Global.SetModels(fresh)
-							slog.Debug("models refreshed", "count", len(fresh))
+						for _, account := range accounts {
+							fresh, err := account.client.FetchModels(appCtx)
+							if err != nil {
+								slog.Warn("model refresh failed, keeping cached list", "account", account.name, "error", err)
+							} else {
+								account.state.SetModels(fresh)
+								slog.Debug("models refreshed", "account", account.name, "count", len(fresh))
+							}
 						}
 						if directAnthropic != nil {
 							ctx, cancel := context.WithTimeout(appCtx, 30*time.Second)
@@ -199,9 +210,23 @@ func startCmd() *cobra.Command {
 				deps.DirectAnthropic = directAnthropic
 			}
 			endpoints := handler.New(deps)
+			accountHandlers := make(map[string]*handler.Handler, len(additionalAccounts))
+			for _, account := range additionalAccounts {
+				accountDeps := deps
+				accountDeps.State = account.state
+				accountDeps.Copilot = account.client
+				accountDeps.Budget = account.budget
+				accountDeps.Metrics = state.NewMetricsStore()
+				accountDeps.DirectAnthropic = nil
+				accountHandlers[account.name] = handler.New(accountDeps)
+				slog.Info("Copilot account enabled", "account", account.name,
+					"budget_usd", account.budget.Snapshot().LimitUSD, "base_path", "/accounts/"+account.name)
+			}
 			srv := server.NewWithHandler(server.Options{
-				Host: host,
-				Port: port,
+				Host:          host,
+				Port:          port,
+				Accounts:      accountHandlers,
+				AccountConfig: accountsConfig,
 			}, endpoints)
 
 			sigCh := make(chan os.Signal, 1)
@@ -212,10 +237,12 @@ func startCmd() *cobra.Command {
 				return err
 			}
 			err = serveUntilShutdown(srv, listener, sigCh, cancelApp)
-			if budget != nil {
-				snapshot := budget.Snapshot()
-				slog.Info("final token budget", "estimated_spent_usd", snapshot.EstimatedSpentUSD,
-					"reserved_usd", snapshot.ReservedUSD, "in_flight", snapshot.InFlight)
+			for _, account := range accounts {
+				if account.budget != nil {
+					snapshot := account.budget.Snapshot()
+					slog.Info("final token budget", "account", account.name, "estimated_spent_usd", snapshot.EstimatedSpentUSD,
+						"reserved_usd", snapshot.ReservedUSD, "in_flight", snapshot.InFlight)
+				}
 			}
 			return err
 		},
@@ -235,6 +262,7 @@ func startCmd() *cobra.Command {
 	cmd.Flags().Float64Var(&budgetReservedUSD, "budget-reserved-usd", 0, "portion of restored spend reserved for unknown usage (requires --budget-spent-usd)")
 	cmd.Flags().BoolVar(&anthropicFallback, "anthropic-fallback", true, "retry through Copilot when the direct Anthropic API rejects a request for credit, auth, rate-limit or server errors")
 	cmd.Flags().StringVar(&forceCacheTTL, "force-cache-ttl", "", "override all native Messages cache breakpoints with 5m or 1h")
+	cmd.Flags().StringVar(&accountsFile, "accounts-file", "", "JSON file with additional Copilot accounts, budgets, and model routing rules")
 
 	return cmd
 }

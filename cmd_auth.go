@@ -16,6 +16,7 @@ func authCmd() *cobra.Command {
 		verbose   bool
 		showToken bool
 		force     bool
+		tokenFile string
 	)
 
 	cmd := &cobra.Command{
@@ -25,6 +26,13 @@ func authCmd() *cobra.Command {
 			setupLogging(verbose)
 			state.Global.SetShowToken(showToken)
 
+			if tokenFile != "" {
+				if err := auth.LoginToFile(cmd.Context(), tokenFile, force); err != nil {
+					return fmt.Errorf("authentication failed: %w", err)
+				}
+				fmt.Printf("\n  Authentication successful! Token path: %s\n\n", tokenFile)
+				return nil
+			}
 			if err := state.EnsurePaths(); err != nil {
 				return err
 			}
@@ -48,5 +56,6 @@ func authCmd() *cobra.Command {
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "enable verbose logging")
 	cmd.Flags().BoolVar(&showToken, "show-token", false, "print token to console")
 	cmd.Flags().BoolVar(&force, "force", false, "force re-authentication even if token exists")
+	cmd.Flags().StringVar(&tokenFile, "token-file", "", "save an additional account's login to this file without changing the default login")
 	return cmd
 }

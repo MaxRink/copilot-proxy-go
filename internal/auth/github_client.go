@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,7 +17,11 @@ type CopilotTokenResponse struct {
 }
 
 func FetchCopilotToken(githubToken, vsCodeVersion string) (*CopilotTokenResponse, error) {
-	req, err := http.NewRequest(http.MethodGet, "https://api.github.com/copilot_internal/v2/token", nil)
+	return FetchCopilotTokenContext(context.Background(), githubToken, vsCodeVersion)
+}
+
+func FetchCopilotTokenContext(ctx context.Context, githubToken, vsCodeVersion string) (*CopilotTokenResponse, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.github.com/copilot_internal/v2/token", nil)
 	if err != nil {
 		return nil, fmt.Errorf("creating copilot token request: %w", err)
 	}
@@ -33,6 +38,9 @@ func FetchCopilotToken(githubToken, vsCodeVersion string) (*CopilotTokenResponse
 	var result CopilotTokenResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("decoding copilot token response: %w", err)
+	}
+	if result.Token == "" {
+		return nil, fmt.Errorf("copilot token response contained an empty token")
 	}
 	return &result, nil
 }

@@ -10,28 +10,42 @@ import (
 	"github.com/tonghaoch/copilot-proxy-go/internal/state"
 )
 
-var (
-	refreshMu   sync.Mutex
+type tokenRefresher struct {
+	mu          sync.Mutex
 	lastRefresh time.Time
-)
+	state       *state.State
+	fetch       func(string, string) (*CopilotTokenResponse, error)
+}
+
+var defaultRefresher = &tokenRefresher{state: state.Global, fetch: FetchCopilotToken}
 
 func RefreshCopilotTokenNow() error {
-	refreshMu.Lock()
-	defer refreshMu.Unlock()
-	if time.Since(lastRefresh) < 30*time.Second {
+	return defaultRefresher.refreshNow()
+}
+
+func (t *tokenRefresher) refreshNow() error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if time.Since(t.lastRefresh) < 30*time.Second {
 		return nil
 	}
-	githubToken := state.Global.GetGithubToken()
-	vsCodeVersion := state.Global.GetVSCodeVersion()
-	slog.Info("immediate Copilot token refresh triggered")
-	copilotToken, err := FetchCopilotToken(githubToken, vsCodeVersion)
+	_, err := t.refresh()
+	return err
+}
+
+// refresh is called with t.mu held so scheduled and request-level refreshes cannot race.
+func (t *tokenRefresher) refresh() (*CopilotTokenResponse, error) {
+	githubToken := t.state.GetGithubToken()
+	vsCodeVersion := t.state.GetVSCodeVersion()
+	slog.Info("refreshing Copilot token...")
+	copilotToken, err := t.fetch(githubToken, vsCodeVersion)
 	if err != nil {
-		return fmt.Errorf("refreshing copilot token: %w", err)
+		return nil, fmt.Errorf("refreshing copilot token: %w", err)
 	}
-	state.Global.SetCopilotToken(copilotToken.Token)
-	lastRefresh = time.Now()
-	slog.Info("Copilot token refreshed successfully (immediate)")
-	return nil
+	t.state.SetCopilotToken(copilotToken.Token)
+	t.lastRefresh = time.Now()
+	slog.Info("Copilot token refreshed successfully")
+	return copilotToken, nil
 }
 
 func StartTokenRefresh(expiresAt int64, refreshIn int) {
@@ -41,6 +55,26 @@ func StartTokenRefresh(expiresAt int64, refreshIn int) {
 // StartTokenRefreshContext refreshes tokens until the application context is
 // cancelled. Timers, rather than time.Sleep, make shutdown immediate.
 func StartTokenRefreshContext(ctx context.Context, expiresAt int64, refreshIn int) {
+	defaultRefresher.start(ctx, expiresAt, refreshIn)
+}
+
+// SetupAccount authenticates an additional account without reading or overwriting
+// the default login's token file, state, or refresh cooldown.
+func SetupAccount(ctx context.Context, s *state.State, githubToken string) (func() error, error) {
+	t := &tokenRefresher{state: s, fetch: func(token, version string) (*CopilotTokenResponse, error) {
+		return FetchCopilotTokenContext(ctx, token, version)
+	}}
+	s.SetGithubToken(githubToken)
+	token, err := t.fetch(githubToken, s.GetVSCodeVersion())
+	if err != nil {
+		return nil, err
+	}
+	s.SetCopilotToken(token.Token)
+	t.start(ctx, token.ExpiresAt, token.RefreshIn)
+	return t.refreshNow, nil
+}
+
+func (t *tokenRefresher) start(ctx context.Context, expiresAt int64, refreshIn int) {
 	refreshDuration := calcRefreshDuration(expiresAt, refreshIn)
 	go func() {
 		for {
@@ -53,23 +87,16 @@ func StartTokenRefreshContext(ctx context.Context, expiresAt int64, refreshIn in
 				return
 			case <-timer.C:
 			}
-			githubToken := state.Global.GetGithubToken()
-			vsCodeVersion := state.Global.GetVSCodeVersion()
-			slog.Info("refreshing Copilot token...")
-			copilotToken, err := FetchCopilotToken(githubToken, vsCodeVersion)
+			t.mu.Lock()
+			copilotToken, err := t.refresh()
+			t.mu.Unlock()
 			if err != nil {
 				slog.Error("failed to refresh Copilot token", "error", err)
 				refreshDuration = 30 * time.Second
 				continue
 			}
-			state.Global.SetCopilotToken(copilotToken.Token)
-			refreshMu.Lock()
-			lastRefresh = time.Now()
-			refreshMu.Unlock()
-			if state.Global.GetShowToken() {
+			if t.state.GetShowToken() {
 				slog.Info("refreshed Copilot token", "token", copilotToken.Token)
-			} else {
-				slog.Info("Copilot token refreshed successfully")
 			}
 			refreshDuration = calcRefreshDuration(copilotToken.ExpiresAt, copilotToken.RefreshIn)
 		}

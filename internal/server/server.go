@@ -10,14 +10,17 @@ import (
 	chimw "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 
+	"github.com/tonghaoch/copilot-proxy-go/internal/config"
 	"github.com/tonghaoch/copilot-proxy-go/internal/handler"
 	"github.com/tonghaoch/copilot-proxy-go/internal/middleware"
 )
 
 // Options configures the server behavior.
 type Options struct {
-	Host string
-	Port int
+	Host          string
+	Port          int
+	Accounts      map[string]*handler.Handler
+	AccountConfig *config.CopilotAccounts
 }
 
 // New creates a new HTTP server with all routes and middleware configured.
@@ -37,6 +40,7 @@ func NewWithHandler(opts Options, endpoints *handler.Handler) *http.Server {
 		AllowedOrigins:   []string{"*"},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"*"},
+		ExposedHeaders:   []string{"X-Copilot-Proxy-Account"},
 		AllowCredentials: false,
 		MaxAge:           300,
 	}))
@@ -44,33 +48,13 @@ func NewWithHandler(opts Options, endpoints *handler.Handler) *http.Server {
 
 	// API key authentication
 	r.Use(middleware.Auth)
-
-	// Routes
-	r.Get("/", endpoints.Health)
-	r.Get("/token", endpoints.Token)
-	r.Get("/usage", endpoints.Usage)
-	r.Get("/dashboard", endpoints.Dashboard)
-	r.Get("/api/stats", endpoints.Stats)
-
-	// Models
-	r.Get("/models", endpoints.Models)
-	r.Get("/v1/models", endpoints.Models)
-
-	// Chat Completions
-	r.Post("/chat/completions", endpoints.ChatCompletions)
-	r.Post("/v1/chat/completions", endpoints.ChatCompletions)
-
-	// Messages (Anthropic-compatible)
-	r.Post("/v1/messages", endpoints.Messages)
-	r.Post("/v1/messages/count_tokens", endpoints.CountTokens)
-
-	// Responses (OpenAI Responses API)
-	r.Post("/responses", endpoints.Responses)
-	r.Post("/v1/responses", endpoints.Responses)
-
-	// Embeddings
-	r.Post("/embeddings", endpoints.Embeddings)
-	r.Post("/v1/embeddings", endpoints.Embeddings)
+	accounts := newAccountRouter(endpoints, opts.Accounts, opts.AccountConfig)
+	r.Use(accounts.selectAccount)
+	r.Get("/api/accounts", accounts.list)
+	registerRoutes(r, accounts)
+	r.Route("/accounts/{account}", func(r chi.Router) {
+		registerRoutes(r, accounts)
+	})
 
 	host := opts.Host
 	if host == "" {
@@ -88,6 +72,41 @@ func NewWithHandler(opts Options, endpoints *handler.Handler) *http.Server {
 		WriteTimeout: 0,
 		IdleTimeout:  120 * time.Second,
 	}
+}
+
+func registerRoutes(r chi.Router, accounts *accountRouter) {
+	handle := func(fn func(*handler.Handler, http.ResponseWriter, *http.Request)) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			fn(r.Context().Value(accountKey{}).(accountSelection).handler, w, r)
+		}
+	}
+
+	// Routes
+	r.Get("/", handle((*handler.Handler).Health))
+	r.Get("/token", handle((*handler.Handler).Token))
+	r.Get("/usage", handle((*handler.Handler).Usage))
+	r.Get("/dashboard", handle((*handler.Handler).Dashboard))
+	r.Get("/api/stats", handle((*handler.Handler).Stats))
+
+	// Models
+	r.Get("/models", accounts.models)
+	r.Get("/v1/models", accounts.models)
+
+	// Chat Completions
+	r.Post("/chat/completions", handle((*handler.Handler).ChatCompletions))
+	r.Post("/v1/chat/completions", handle((*handler.Handler).ChatCompletions))
+
+	// Messages (Anthropic-compatible)
+	r.Post("/v1/messages", handle((*handler.Handler).Messages))
+	r.Post("/v1/messages/count_tokens", handle((*handler.Handler).CountTokens))
+
+	// Responses (OpenAI Responses API)
+	r.Post("/responses", handle((*handler.Handler).Responses))
+	r.Post("/v1/responses", handle((*handler.Handler).Responses))
+
+	// Embeddings
+	r.Post("/embeddings", handle((*handler.Handler).Embeddings))
+	r.Post("/v1/embeddings", handle((*handler.Handler).Embeddings))
 }
 
 func requestIDHeader(next http.Handler) http.Handler {
@@ -112,6 +131,7 @@ func requestLogger(next http.Handler) http.Handler {
 			"status", ww.Status(),
 			"bytes", ww.BytesWritten(),
 			"duration_ms", time.Since(start).Milliseconds(),
+			"account", ww.Header().Get("X-Copilot-Proxy-Account"),
 		)
 	})
 }
