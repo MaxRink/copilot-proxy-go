@@ -27,6 +27,7 @@ type RequestRecord struct {
 	StatusCode          int       `json:"status_code"`
 	Error               string    `json:"error,omitempty"`
 	Fallback            string    `json:"fallback,omitempty"` // why a direct Anthropic call was retried via Copilot
+	EstimatedCostUSD    float64   `json:"estimated_cost_usd,omitempty"`
 
 	UpstreamAttempted      bool                  `json:"-"`
 	UpstreamRejected       bool                  `json:"-"`
@@ -98,6 +99,7 @@ type Aggregates struct {
 	TypeCounts               map[string]int64         `json:"type_counts"`
 	Providers                map[string]ProviderUsage `json:"providers"`
 	FallbackCount            int64                    `json:"fallback_count"`
+	ModelSpendUSD            map[string]float64       `json:"model_spend_usd"`
 	StartTime                time.Time                `json:"start_time"`
 }
 
@@ -148,6 +150,7 @@ func NewMetricsStore() *metricsStore {
 			BackendCounts: make(map[string]int64),
 			TypeCounts:    make(map[string]int64),
 			Providers:     make(map[string]ProviderUsage),
+			ModelSpendUSD: make(map[string]float64),
 			StartTime:     time.Now(),
 		},
 		ring: make([]RequestRecord, ringBufferSize),
@@ -183,6 +186,9 @@ func (m *metricsStore) RecordRequest(rec RequestRecord) {
 	}
 	if model != "" {
 		m.agg.ModelCounts[model]++
+		if rec.EstimatedCostUSD > 0 {
+			m.agg.ModelSpendUSD[model] += rec.EstimatedCostUSD
+		}
 	}
 
 	if rec.Backend != "" {
@@ -229,6 +235,7 @@ func (m *metricsStore) Snapshot() MetricsSnapshot {
 	agg.BackendCounts = copyMap(m.agg.BackendCounts)
 	agg.TypeCounts = copyMap(m.agg.TypeCounts)
 	agg.Providers = copyMap(m.agg.Providers)
+	agg.ModelSpendUSD = copyMap(m.agg.ModelSpendUSD)
 
 	// Copy session
 	session := m.session

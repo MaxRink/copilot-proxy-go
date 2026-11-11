@@ -147,36 +147,53 @@ func validPrice(price float64) bool {
 	return price >= 0 && !math.IsNaN(price) && !math.IsInf(price, 0)
 }
 
+// Raise lifts the limit at runtime. It never lowers it, so a mistyped amount cannot strand admitted work.
+func (b *TokenBudget) Raise(increaseUSD float64) (BudgetSnapshot, error) {
+	delta := math.Floor(increaseUSD * nanoUSD)
+	if math.IsNaN(delta) || delta < 1 || delta >= float64(math.MaxInt64) {
+		return BudgetSnapshot{}, errors.New("budget increase must be a positive, finite USD amount")
+	}
+	b.mu.Lock()
+	if int64(delta) > math.MaxInt64-b.limit {
+		b.mu.Unlock()
+		return BudgetSnapshot{}, errors.New("budget increase overflows the limit")
+	}
+	b.limit += int64(delta)
+	b.mu.Unlock()
+	return b.Snapshot(), nil
+}
+
 // Complete accounts for an admitted request, or pauses admission if its cost
 // cannot be determined. Explicit upstream 4xx rejections are not charged.
-func (b *TokenBudget) Complete(admission *BudgetAdmission, rec RequestRecord) {
+// It returns the USD amount charged, including any conservative reserve.
+func (b *TokenBudget) Complete(admission *BudgetAdmission, rec RequestRecord) float64 {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if admission == nil || admission.finished {
-		return
+		return 0
 	}
 	admission.finished = true
 	b.inFlight--
 	if !rec.UpstreamAttempted || (rec.UpstreamRejected && rec.UncertainRetries == 0) {
-		return
+		return 0
 	}
 	if rec.Backend != admission.backend {
 		b.pause(admission.model.ID, "upstream backend differed from the admitted pricing")
-		return
+		return 0
 	}
 	complete := rec.InputUsageKnown && (admission.backend == "embeddings" || rec.OutputUsageKnown)
 	if !rec.UpstreamRejected {
 		if rec.UsageAccountingError != "" {
 			b.pause(admission.model.ID, rec.UsageAccountingError)
-			return
+			return 0
 		}
 		if rec.RequireIterations && len(rec.UsageIterations) == 0 {
 			b.pause(admission.model.ID, "upstream omitted compaction iteration usage")
-			return
+			return 0
 		}
 		if !complete && (rec.MultiIterationRisk || len(rec.UsageIterations) > 0) {
 			b.pause(admission.model.ID, "multi-iteration request did not report complete usage")
-			return
+			return 0
 		}
 	}
 	var cost, reserve int64
@@ -192,18 +209,18 @@ func (b *TokenBudget) Complete(admission *BudgetAdmission, rec RequestRecord) {
 		}
 		if err != nil {
 			b.pause(admission.model.ID, err.Error())
-			return
+			return 0
 		}
 	}
 	if rec.UncertainRetries > 0 {
 		bound, err := estimateIncompleteTokenCost(admission.model, RequestRecord{Backend: admission.backend})
 		if err != nil {
 			b.pause(admission.model.ID, err.Error())
-			return
+			return 0
 		}
 		if bound > 0 && rec.UncertainRetries > (math.MaxInt64-cost)/bound {
 			b.pause(admission.model.ID, "estimated cost overflowed")
-			return
+			return 0
 		}
 		retries := bound * rec.UncertainRetries
 		cost += retries
@@ -211,7 +228,7 @@ func (b *TokenBudget) Complete(admission *BudgetAdmission, rec RequestRecord) {
 	}
 	if cost > math.MaxInt64-b.spent {
 		b.pause(admission.model.ID, "estimated cost overflowed")
-		return
+		return 0
 	}
 	b.spent += cost
 	b.reserved += reserve
@@ -227,6 +244,7 @@ func (b *TokenBudget) Complete(admission *BudgetAdmission, rec RequestRecord) {
 		slog.Warn("upstream usage incomplete; reserved conservative token cost",
 			"model", admission.model.ID, "reserved_usd", float64(reserve)/nanoUSD)
 	}
+	return float64(cost) / nanoUSD
 }
 
 func estimateIterationTokenCost(billing ModelBilling, backend string, iterations []TokenUsageIteration) (int64, error) {

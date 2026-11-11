@@ -6,10 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/tonghaoch/copilot-proxy-go/internal/api"
 	"github.com/tonghaoch/copilot-proxy-go/internal/config"
 	"github.com/tonghaoch/copilot-proxy-go/internal/handler"
@@ -101,13 +104,15 @@ func isModelRequest(r *http.Request) bool {
 
 func (a *accountRouter) list(w http.ResponseWriter, r *http.Request) {
 	type accountInfo struct {
-		Name     string                `json:"name"`
-		BasePath string                `json:"base_path"`
-		Budget   *state.BudgetSnapshot `json:"budget"`
+		Name        string                `json:"name"`
+		BasePath    string                `json:"base_path"`
+		AccountType string                `json:"account_type"`
+		Budget      *state.BudgetSnapshot `json:"budget"`
 	}
 	accounts := make([]accountInfo, 0, len(a.names))
 	for _, name := range a.names {
-		accounts = append(accounts, accountInfo{name, "/accounts/" + name, a.handlers[name].BudgetSnapshot()})
+		h := a.handlers[name]
+		accounts = append(accounts, accountInfo{name, "/accounts/" + name, h.AccountType(), h.BudgetSnapshot()})
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(struct {
@@ -115,6 +120,49 @@ func (a *accountRouter) list(w http.ResponseWriter, r *http.Request) {
 		ModelRoutes    []config.CopilotModelRoute `json:"model_routes"`
 		Accounts       []accountInfo              `json:"accounts"`
 	}{a.config.DefaultAccount, a.config.ModelRoutes, accounts})
+}
+
+// raiseBudget lifts one account's limit for the running process only.
+func (a *accountRouter) raiseBudget(w http.ResponseWriter, r *http.Request) {
+	// CORS allows any origin, so without this any web page could lift the spend guard.
+	if !sameOrigin(r) {
+		api.ForwardError(w, &api.HTTPError{StatusCode: http.StatusForbidden, Message: "budget changes must come from the proxy's own dashboard"})
+		return
+	}
+	name := chi.URLParam(r, "account")
+	h := a.handlers[name]
+	if h == nil {
+		api.ForwardError(w, &api.HTTPError{StatusCode: http.StatusNotFound, Message: "unknown Copilot account"})
+		return
+	}
+	var req struct {
+		IncreaseUSD float64 `json:"increase_usd"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil {
+		api.ForwardError(w, api.InvalidRequest("invalid budget increase", err))
+		return
+	}
+	snapshot, err := h.RaiseBudget(req.IncreaseUSD)
+	if err != nil {
+		api.ForwardError(w, &api.HTTPError{StatusCode: http.StatusBadRequest, Message: err.Error()})
+		return
+	}
+	slog.Info("token budget raised", "account", name, "increase_usd", req.IncreaseUSD, "limit_usd", snapshot.LimitUSD,
+		"estimated_spent_usd", snapshot.EstimatedSpentUSD, "reserved_usd", snapshot.ReservedUSD)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(snapshot)
+}
+
+func sameOrigin(r *http.Request) bool {
+	if site := r.Header.Get("Sec-Fetch-Site"); site != "" && site != "same-origin" && site != "none" {
+		return false
+	}
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	u, err := url.Parse(origin)
+	return err == nil && u.Host == r.Host
 }
 
 func (a *accountRouter) models(w http.ResponseWriter, r *http.Request) {

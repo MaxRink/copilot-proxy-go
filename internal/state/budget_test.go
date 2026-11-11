@@ -335,3 +335,19 @@ func TestBudgetPricesReportedAndUnknownOpenAICacheWrites(t *testing.T) {
 		t.Fatalf("reported cost=%d nanos, unknown cost=%d nanos", reported, unknown)
 	}
 }
+
+func TestBudgetRaiseOnlyIncreasesAndReopensAdmission(t *testing.T) {
+	budget, err := NewTokenBudgetWithSpent(10, 10)
+	if err != nil || !budget.Snapshot().Blocked {
+		t.Fatalf("exhausted budget not blocked: %v", err)
+	}
+	for _, invalid := range []float64{0, -5, math.NaN(), math.Inf(1)} {
+		if _, err := budget.Raise(invalid); err == nil {
+			t.Fatalf("accepted invalid increase %v", invalid)
+		}
+	}
+	got, err := budget.Raise(2.5)
+	if err != nil || got.LimitUSD != 12.5 || got.RemainingUSD != 2.5 || got.Blocked {
+		t.Fatalf("raise = %+v, %v", got, err)
+	}
+}

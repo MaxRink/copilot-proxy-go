@@ -175,3 +175,40 @@ func TestAccountRoutingEnforcesBodyLimit(t *testing.T) {
 		t.Fatalf("oversize body reached an account: %d", w.Code)
 	}
 }
+
+func TestAccountBudgetRaiseIsSameOriginAndPerAccount(t *testing.T) {
+	srv, _, _, pb, bb := accountServer(t, 0.001, 10)
+	raise := func(path, origin string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"increase_usd":5}`))
+		req.Host = "127.0.0.1:4141"
+		setTestAuthorization(req)
+		if origin != "" {
+			req.Header.Set("Origin", origin)
+		}
+		w := httptest.NewRecorder()
+		srv.Handler.ServeHTTP(w, req)
+		return w
+	}
+	if w := raise("/api/accounts/private/budget", "https://evil.example"); w.Code != http.StatusForbidden || pb.Snapshot().LimitUSD != 0.001 {
+		t.Fatalf("cross-origin raise accepted: %d %s", w.Code, w.Body)
+	}
+	if w := raise("/api/accounts/missing/budget", "http://127.0.0.1:4141"); w.Code != http.StatusNotFound {
+		t.Fatalf("unknown account: %d", w.Code)
+	}
+	if w := raise("/api/accounts/private/budget", "http://127.0.0.1:4141"); w.Code != http.StatusOK || pb.Snapshot().LimitUSD != 5.001 || bb.Snapshot().LimitUSD != 10 {
+		t.Fatalf("raise hit wrong account: %d %s", w.Code, w.Body)
+	}
+	w := serveBudgetRequest(srv, http.MethodPost, "/v1/responses", `{"model":"claude-opus-5-5","input":"hello"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("raised budget still refuses: %d %s", w.Code, w.Body)
+	}
+	w = serveBudgetRequest(srv, http.MethodGet, "/accounts/private/api/stats", "")
+	var stats struct {
+		Recent        []state.RequestRecord `json:"recent"`
+		ModelSpendUSD map[string]float64    `json:"model_spend_usd"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &stats); err != nil || len(stats.Recent) != 1 ||
+		stats.Recent[0].EstimatedCostUSD <= 0 || stats.ModelSpendUSD["claude-opus-5.5"] != stats.Recent[0].EstimatedCostUSD {
+		t.Fatalf("per-request cost missing: %s (%v)", w.Body, err)
+	}
+}

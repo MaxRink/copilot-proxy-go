@@ -240,7 +240,7 @@ func startCmd() *cobra.Command {
 			for _, account := range accounts {
 				if account.budget != nil {
 					snapshot := account.budget.Snapshot()
-					slog.Info("final token budget", "account", account.name, "estimated_spent_usd", snapshot.EstimatedSpentUSD,
+					slog.Info("final token budget", "account", account.name, "limit_usd", snapshot.LimitUSD, "estimated_spent_usd", snapshot.EstimatedSpentUSD,
 						"reserved_usd", snapshot.ReservedUSD, "in_flight", snapshot.InFlight)
 				}
 			}

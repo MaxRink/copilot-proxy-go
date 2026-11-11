@@ -51,6 +51,7 @@ func NewWithHandler(opts Options, endpoints *handler.Handler) *http.Server {
 	accounts := newAccountRouter(endpoints, opts.Accounts, opts.AccountConfig)
 	r.Use(accounts.selectAccount)
 	r.Get("/api/accounts", accounts.list)
+	r.Post("/api/accounts/{account}/budget", accounts.raiseBudget)
 	registerRoutes(r, accounts)
 	r.Route("/accounts/{account}", func(r chi.Router) {
 		registerRoutes(r, accounts)

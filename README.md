@@ -247,7 +247,9 @@ clients). Every API route is available under that prefix. Responses identify the
 selected account with `X-Copilot-Proxy-Account`, also included in request logs.
 `GET /api/accounts` lists account names, base paths, routing rules and current
 budgets; `/accounts/_dtag/api/stats` and `/accounts/_dtag/usage` show only that
-account. The dashboard has an account selector.
+account. The dashboard's account selector includes **All accounts** (the root
+`/dashboard`), which merges every account's metrics and activity feed, and shows
+per-account budgets, the ordered routing policy, and a raise-budget control.
 
 The ordinary proxy API keys authorize **all** configured accounts; profiles are
 not separate client access-control policies. Additional profiles use Copilot
@@ -287,7 +289,9 @@ The budget estimates **this process's** token usage from Copilot's per-model pri
 
 This is **not a guaranteed GitHub or Anthropic spending cap or invoice**. Existing usage, plan allowances, discounts, server-tool fees, taxes, and charges outside this process are not included, and retry reserves may exceed actual charges. Anthropic prices are maintained in the proxy and can become stale; the Anthropic Models API does not provide pricing. Requests already admitted can finish and exceed the limit. Missing model pricing rejects that request; direct Anthropic models also require reported input and output limits. Incomplete usage with no reliable bound (including interrupted multi-iteration requests and unknown embeddings batches) pauses further model requests rather than silently undercounting. When budgeting is enabled, server-side model fallbacks and advisor tools are rejected because their additional models cannot yet be priced safely. Health and status endpoints remain available.
 
-Restarting normally resets the estimate. To carry it forward, note `estimated_spent_usd` and `reserved_usd` from `/api/stats` after in-flight requests finish (or from the final budget log after a graceful shutdown), then start with, for example, `--budget-usd 200 --budget-spent-usd 42.50 --budget-reserved-usd 10`. The reserve is part of the restored total, not added to it. Include a conservative reserve for any prior requests whose cost was unknown. The restored values are estimates, not persistent billing reconciliation.
+The dashboard can raise a running budget: its **+ Raise budget** control calls `POST /api/accounts/<name>/budget` with `{"increase_usd": 50}` (`default` names the default account when no accounts file is used). Limits can only be increased this way, the change lasts until restart, and cross-origin browser requests are refused so another web page cannot lift the limit. Each request's estimate appears as `estimated_cost_usd` in `/api/stats` `recent`, with per-model totals in `model_spend_usd`; the dashboard's **Request insights** card summarizes error rate, latency percentiles, cost, cache hits, and stop reasons over the buffered requests.
+
+Restarting normally resets the estimate. To carry it forward, note `limit_usd`, `estimated_spent_usd` and `reserved_usd` from `/api/stats` after in-flight requests finish (or from the final budget log after a graceful shutdown), then start with, for example, `--budget-usd 200 --budget-spent-usd 42.50 --budget-reserved-usd 10`. The reserve is part of the restored total, not added to it. Include a conservative reserve for any prior requests whose cost was unknown. The restored values are estimates, not persistent billing reconciliation.
 
 ## CLI Reference
 

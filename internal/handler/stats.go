@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
@@ -18,6 +19,7 @@ type statsResponse struct {
 	TypeCounts    map[string]int64               `json:"type_counts"`
 	Providers     map[string]state.ProviderUsage `json:"providers"`
 	FallbackCount int64                          `json:"fallback_count"`
+	ModelSpendUSD map[string]float64             `json:"model_spend_usd"`
 	Session       *statsSession                  `json:"session"`
 	Recent        []state.RequestRecord          `json:"recent"`
 	Config        statsConfig                    `json:"config"`
@@ -74,11 +76,7 @@ func (h *Handler) Stats(w http.ResponseWriter, r *http.Request) {
 	cfg := h.config.Snapshot()
 	apiKeys := h.config.APIKeys()
 
-	// Limit recent to last 50 for the API response
 	recent := snap.Recent
-	if len(recent) > 50 {
-		recent = recent[:50]
-	}
 
 	var session *statsSession
 	if !snap.Session.LastSeen.IsZero() {
@@ -115,6 +113,7 @@ func (h *Handler) Stats(w http.ResponseWriter, r *http.Request) {
 		TypeCounts:    snap.Aggregates.TypeCounts,
 		Providers:     snap.Aggregates.Providers,
 		FallbackCount: snap.Aggregates.FallbackCount,
+		ModelSpendUSD: snap.Aggregates.ModelSpendUSD,
 		Session:       session,
 		Recent:        recent,
 		Config: statsConfig{
@@ -143,4 +142,23 @@ func (h *Handler) BudgetSnapshot() *state.BudgetSnapshot {
 	}
 	snapshot := h.budget.Snapshot()
 	return &snapshot
+}
+
+var errNoBudget = errors.New("no token budget configured for this account")
+
+// RaiseBudget lifts this handler's estimated spend limit by increaseUSD.
+func (h *Handler) RaiseBudget(increaseUSD float64) (*state.BudgetSnapshot, error) {
+	if h.budget == nil {
+		return nil, errNoBudget
+	}
+	snapshot, err := h.budget.Raise(increaseUSD)
+	if err != nil {
+		return nil, err
+	}
+	return &snapshot, nil
+}
+
+// AccountType reports the Copilot plan type this handler authenticates as.
+func (h *Handler) AccountType() string {
+	return h.state.GetAccountType()
 }

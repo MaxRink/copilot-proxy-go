@@ -42,7 +42,7 @@ func (t *trackedRequest) Finish() {
 		if t.retries != nil {
 			t.Record.UncertainRetries = max(t.Record.UncertainRetries, t.retries.Uncertain())
 		}
-		t.budget.Complete(t.admission, *t.Record)
+		t.Record.EstimatedCostUSD = t.budget.Complete(t.admission, *t.Record)
 	}
 	t.Record.UsageIterations = nil
 	t.metrics.RecordRequest(*t.Record)
